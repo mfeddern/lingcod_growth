@@ -1,6 +1,7 @@
 remotes::install_github("pfmc-assessments/indexwc")
 library(nwfscSurvey)
 library(sdmTMB)
+library(dplyr)
 bio_dat <- pull_bio(common_name = "lingcod")
 names(bio_dat) <- tolower(names(bio_dat))
 bio_dat$yday <- lubridate::yday(bio_dat$date)
@@ -50,9 +51,11 @@ fit <- sdmTMB(
 )
 
 # use indexwc grid
-grid <- indexwc::california_current_grid |>
-  dplyr::filter(area_km2_WCGBTS == 4)
-grid <- dplyr::mutate(grid, age = 8, doy_scaled = 0, doy_scaled2 = 0)
+# grid <- indexwc::california_current_grid |>
+#   dplyr::filter(area_km2_WCGBTS == 4)
+pred_grid <- predictions%>%
+  filter(year<=2019)
+grid <- dplyr::mutate(pred_grid, age = 8, doy_scaled = 0, doy_scaled2 = 0)
 grid <- replicate_df(
   grid,
   time_name = "year",
@@ -60,13 +63,13 @@ grid <- replicate_df(
 )
 
 grid$fyear <- as.factor(grid$year)
-grid <- dplyr::rename(grid, X = x, Y = y)
+#grid <- dplyr::rename(grid, X = x, Y = y)
 
 # here is where we'd fit the biomass model, and use the predicted biomass as the RHS of the vector argument
 indx <- sdmTMB::get_weighted_average(
   fit,
   newdata = grid,
-  vector =exp(predictions$est), #you need to replace this with index WC
+  vector =exp(grid$est), #you need to replace this with index WC
   bias_correct = TRUE
 )
 
