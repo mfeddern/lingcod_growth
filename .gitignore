@@ -2,3 +2,8 @@
 .Rhistory
 .RData
 .Ruserdata
+# === Large Files ===
+*
+
+# === macOS System Files ===
+.DS_Store
