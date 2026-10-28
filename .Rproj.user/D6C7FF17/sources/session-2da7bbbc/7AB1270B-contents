@@ -32,9 +32,11 @@ my_data$anisotropy
 list(my_data$spatiotemporal1, my_data$spatiotemporal2)
 
 ## Estimate the sdmTMB model
+dat2019<-my_data$data_filtered[[1]]%>%
+  filter(year<=2019)
 
 fit <- run_sdmtmb(
-  data = my_data$data_filtered[[1]],
+  data = dat2019,#my_data$data_filtered[[1]],
   family = my_data$family,
   formula = my_data$formula,
   n_knots = my_data$knots,
@@ -61,7 +63,7 @@ save_index_outputs(
   diagnostics = diag,
   indices = index,
   overwrite = TRUE,
-  dir = "output/coastwide"
+  dir = "output/coastwide/2019"
 )
 
 #### N/S Medncino ####
@@ -72,6 +74,7 @@ my_data <- pull_and_format_data(
 )
 
 my_data[["data_filtered"]][[1]] <- my_data[["data_filtered"]][[1]] %>%
+  filter(year<=2019)%>%
   mutate(split_mendocino = ifelse(latitude > 40.1666667, "N", "S"))
 
 names(my_data)

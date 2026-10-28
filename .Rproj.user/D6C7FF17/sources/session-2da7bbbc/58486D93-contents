@@ -7,7 +7,7 @@ names(bio_dat) <- tolower(names(bio_dat))
 bio_dat$yday <- lubridate::yday(bio_dat$date)
 
 #grabbing from the indexwc output
-load("output/coastwide/lingcod/wcgbts/lat_32.1-40.2_years_2003-2025/delta_gamma/diagnostics/predictions.rdata")
+load("output/coastwide/2019/lingcod/wcgbts/lat_32.1-40.2_years_2003-2025/delta_gamma/diagnostics/predictions.rdata")
 head(predictions)
 
 # filter out only females
@@ -53,8 +53,7 @@ fit <- sdmTMB(
 # use indexwc grid
 # grid <- indexwc::california_current_grid |>
 #   dplyr::filter(area_km2_WCGBTS == 4)
-pred_grid <- predictions%>%
-  filter(year<=2019)
+pred_grid <- predictions
 grid <- dplyr::mutate(pred_grid, age = 8, doy_scaled = 0, doy_scaled2 = 0)
 grid <- replicate_df(
   grid,
