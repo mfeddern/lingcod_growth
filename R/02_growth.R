@@ -18,7 +18,7 @@ load("output/coastwide/2019/lingcod/wcgbts/lat_32.1-48.5_years_2003-2019/delta_g
 head(predictions)
 exp(predictions$est)
 sex_selection='M'
-location_selection="Coastwide"
+location_selection="N"
 l_inf<- 103.645
 
 run_growth<-function(sex_selection, location_selection, l_inf){
@@ -77,12 +77,12 @@ run_growth<-function(sex_selection, location_selection, l_inf){
   # Generating the grid for the coastwide index
   
   pred_grid <- predictions
-  if (location == "Coastwide") {
+  if (location_selection == "Coastwide") {
     # No filtering: keep coastwide predictions
     pred_grid <- pred_grid
-  } else if (location == "N") {
+  } else if (location_selection == "N") {
     pred_grid <- dplyr::filter(pred_grid, split_mendocino == "N")
-  } else if (location == "S") {
+  } else if (location_selection == "S") {
     pred_grid <- dplyr::filter(pred_grid, split_mendocino == "S")
   } else {
     stop("Invalid location: must be 'N', 'S', or NULL.")
@@ -95,7 +95,7 @@ run_growth<-function(sex_selection, location_selection, l_inf){
   )
   grid$fyear <- as.factor(grid$year)
   
-  # 1. Clean grid with annual normalized biomass weights (sums to 1 per year)
+  # Clean grid with annual normalized biomass weights (sums to 1 per year)
   grid_age8 <- predictions |>
     sf::st_drop_geometry() |>
     dplyr::ungroup() |>
@@ -113,7 +113,7 @@ run_growth<-function(sex_selection, location_selection, l_inf){
   grid_age9 <- dplyr::mutate(grid_age8, age = 9)
   
   message("Step 6/6: Running get_index() and compiling k_index...")
-  # 2. Run sdmTMB::get_index() with area = biomass_wt on your existing `fit`
+  # Run sdmTMB::get_index() with area = biomass_wt on your existing `fit`
   idx_8FC <- sdmTMB::get_index(
     fit,
     newdata = grid_age8,
@@ -132,8 +132,7 @@ run_growth<-function(sex_selection, location_selection, l_inf){
   k_index <- data.frame(
     year = idx_8FC$year,
     k_est = idx_8FC$est - idx_9FC$est
-  )%>%
-    mutate(sex=sex_selection, location=location_selection)
+  )
   
   years <- sort(unique(grid_age8$year))
   n_yrs <- length(years)
@@ -158,8 +157,6 @@ run_growth<-function(sex_selection, location_selection, l_inf){
     # Draw simulations for just this single year
     set.seed(42)
     s8 <- predict(fit, newdata = g8_yr, nsim = 200)
-    
-    set.seed(42)
     s9 <- predict(fit, newdata = g9_yr, nsim = 200)
     
     # Compute weighted average of k = (y_8 - y_9) across space for each draw
@@ -179,7 +176,8 @@ run_growth<-function(sex_selection, location_selection, l_inf){
       k_se  = sd(yr_draws),
       k_lwr = quantile(yr_draws, 0.025),
       k_upr = quantile(yr_draws, 0.975)
-    )
+    )%>%
+      mutate(sex=sex_selection, location=location_selection, linf=l_inf)
   }) |> dplyr::bind_rows()
   return(list(
     k = k_summary,
@@ -188,12 +186,25 @@ run_growth<-function(sex_selection, location_selection, l_inf){
 }
 
 k_index_FC<- run_growth("F", "Coastwide",l_inf)
+#saveRDS(k_index_FC, file = "output/k_index_FC.rds")
 k_index_MC<- run_growth("M", "Coastwide",79.115)
-
+#saveRDS(k_index_MC, file = "output/k_index_MC.rds")
+k_index_FN<- run_growth("F", "N",l_inf)
+k_index_MN<- run_growth("M", "N",79.115)
+k_index_FS<- run_growth("F", "S",97.906)
+k_index_MS<- run_growth("M", "S",80.805)
 #k_summary_north <- k_summary%>%mutate(region="N")
 #k_summary_south <- k_summary_south%>%mutate(region="S",sex="F")
- 
- 
+
+k_index <-k_index_FC[["k"]]%>%
+  bind_rows(k_index_MC[["k"]], k_index_FN[["k"]],k_index_MN[["k"]], k_index_FS[["k"]],k_index_MS[["k"]])
+saveRDS(k_index, file = "output/k_index.rds")
+
+
+
+
+#### Plot Males####
+model<-k_index_MC[["fit_model"]]
 
 # 1. Base map projected to WGS84 / UTM Zone 10N (meters)
 coast <- ne_states(returnclass = "sf", country = "united states of america") |>
@@ -201,7 +212,7 @@ coast <- ne_states(returnclass = "sf", country = "united states of america") |>
   st_transform(crs = 32610)
 
 # 2. Extract main 'age' fixed effect
-age_coef <- tidy(k_index_MC[["fit_model"]], effects = "fixed") |>
+age_coef <- tidy(model, effects = "fixed") |>
   filter(term == "age") |>
   pull(estimate)
 
@@ -219,7 +230,7 @@ pred_grid_sub <- predictions |>
   )
 
 # 4. Predict from the fitted model
-preds <- predict(fit, newdata = pred_grid_sub)
+preds <- predict(model, newdata = pred_grid_sub)
 
 # 5. Reshape and calculate k_f, spatial mean, and annual anomalies
 k_df <- preds |>
@@ -246,7 +257,155 @@ k_df <- preds |>
 max_anom <- max(abs(k_df$anom_k_f), na.rm = TRUE)
 
 # 6. Plot spatial anomalies by year
+annaul_anom_MALES<-ggplot(coast) +
+  geom_tile(
+    data = k_df,
+    aes(x = X * 1000, y = Y * 1000, fill = anom_k_f),
+    width = 4000,
+    height = 4000
+  ) +
+  geom_sf(fill = "grey85", color = "grey40", linewidth = 0.25) +
+  scale_fill_distiller(
+    palette = "RdBu",
+    direction = 1,
+    limits = c(-max_anom, max_anom),
+    name = expression(Delta * k[f])
+  ) +
+  facet_wrap(~ year_anom) +
+  coord_sf(
+    xlim = range(k_df$X * 1000, na.rm = TRUE),
+    ylim = range(k_df$Y * 1000, na.rm = TRUE),
+    expand = FALSE
+  ) +
+  theme_bw() +
+  xlab("") +
+  ylab("") +
+  labs(
+    title = "Lingcod (Male) - Annual Spatial Growth Anomalies",
+    subtitle = expression("Anomaly relative to site-level mean (" * Delta * k[f] == k[f] - bar(k)[f] * ")")
+  ) +
+  theme(
+    strip.background = element_rect(fill = "white"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank()
+  )
+
+
+# 6. Plot spatial anomalies by year
+
+mean_males<-ggplot(coast) +
+     geom_sf() +
+    geom_tile(
+         data = dplyr::distinct(k_df, X, Y, mean_k_f),
+         aes(x = X * 1000, y = Y * 1000, fill = mean_k_f),
+         width = 4000,
+        height = 4000
+       ) +
+     scale_fill_viridis_c(name = expression(k[f])) +
+     coord_sf(
+         xlim = range(k_df$X * 1000),
+         ylim = range(k_df$Y * 1000)
+       ) +
+    theme_bw() +
+    xlab("") + ylab("") +
+    labs(subtitle = "Lingcod (Male) - Mean Growth Rate") +
+    theme(
+         strip.background = element_rect(fill = "white"),
+         axis.text.x = element_text(angle = 45, hjust = 1)
+       )
+
+# Calculate standardized anomalies (z-scores)
+plot_df <- k_df %>%
+  dplyr::distinct(X, Y, mean_k_f) %>%
+  dplyr::mutate(
+    z_score = (mean_k_f - mean(mean_k_f, na.rm = TRUE)) / sd(mean_k_f, na.rm = TRUE)
+  )
+
+# Find the maximum absolute z-score to keep the color scale symmetric around 0
+max_abs <- max(abs(plot_df$z_score), na.rm = TRUE)
+
 ggplot(coast) +
+  geom_sf() +
+  geom_tile(
+    data = plot_df,
+    aes(x = X * 1000, y = Y * 1000, fill = z_score),
+    width = 4000,
+    height = 4000
+  ) +
+  scale_fill_gradient2(
+    name = expression(z(k[f])),
+    low = "#2166ac",
+    mid = "white",
+    high = "#b2182b",
+    midpoint = 0,
+    limits = c(-max_abs, max_abs)
+  ) +
+  coord_sf(
+    xlim = range(k_df$X * 1000),
+    ylim = range(k_df$Y * 1000)
+  ) +
+  theme_bw() +
+  xlab("") +
+  ylab("") +
+  labs(subtitle = "Lingcod (Male) - Standardized Growth Rate Anomaly (SD)") +
+  theme(
+    strip.background = element_rect(fill = "white"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+#### Plot females
+model<-k_index_FC[["fit_model"]]
+# 2. Extract main 'age' fixed effect
+age_coef <- tidy(model, effects = "fixed") |>
+  filter(term == "age") |>
+  pull(estimate)
+
+# 3. Prepare prediction grid for reference year and add UTM coordinates
+ref_year <- 2003
+
+pred_grid_sub <- predictions |>
+  ungroup() |>
+  filter(year == ref_year) |>
+  mutate(
+    age = 8,
+    doy_scaled = 0,
+    doy_scaled2 = 0,
+    fyear = factor(year)
+  )
+
+# 4. Predict from the fitted model
+preds <- predict(model, newdata = pred_grid_sub)
+
+# 5. Reshape and calculate k_f, spatial mean, and annual anomalies
+k_df <- preds |>
+  pivot_longer(
+    cols = starts_with("zeta_s_age:fyear"),
+    names_to = "zeta_s_fyear",
+    names_prefix = "zeta_s_age:fyear",
+    values_to = "zeta_s_vals"
+  ) |>
+  mutate(
+    year_anom = as.integer(zeta_s_fyear),
+    zeta_vals_age_adjusted = zeta_s_vals + age_coef,
+    k_f = -zeta_vals_age_adjusted
+  ) |>
+  group_by(X, Y) |>
+  mutate(
+    mean_k_f = mean(k_f, na.rm = TRUE),
+    sd_k_f = sd(k_f, na.rm = TRUE),
+    anom_k_f = k_f - mean_k_f
+  ) |>
+  ungroup()
+
+
+
+
+# Max absolute anomaly to keep diverging color scale centered at 0
+max_anom <- max(abs(k_df$anom_k_f), na.rm = TRUE)
+
+# 6. Plot spatial anomalies by year
+annaul_anom_FEMALES<-ggplot(coast) +
   geom_tile(
     data = k_df,
     aes(x = X * 1000, y = Y * 1000, fill = anom_k_f),
@@ -282,23 +441,63 @@ ggplot(coast) +
 
 # 6. Plot spatial anomalies by year
 
+mean_females<-ggplot(coast) +
+  geom_sf() +
+  geom_tile(
+    data = dplyr::distinct(k_df, X, Y, mean_k_f),
+    aes(x = X * 1000, y = Y * 1000, fill = mean_k_f),
+    width = 4000,
+    height = 4000
+  ) +
+  scale_fill_viridis_c(name = expression(k[f])) +
+  coord_sf(
+    xlim = range(k_df$X * 1000),
+    ylim = range(k_df$Y * 1000)
+  ) +
+  theme_bw() +
+  xlab("") + ylab("") +
+  labs(subtitle = "Lingcod (Female) - Mean Growth Rate") +
+  theme(
+    strip.background = element_rect(fill = "white"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+# Calculate standardized anomalies (z-scores)
+plot_df <- k_df %>%
+  dplyr::distinct(X, Y, mean_k_f) %>%
+  dplyr::mutate(
+    z_score = (mean_k_f - mean(mean_k_f, na.rm = TRUE)) / sd(mean_k_f, na.rm = TRUE)
+  )
+
+# Find the maximum absolute z-score to keep the color scale symmetric around 0
+max_abs <- max(abs(plot_df$z_score), na.rm = TRUE)
+
 ggplot(coast) +
-     geom_sf() +
-    geom_tile(
-         data = dplyr::distinct(k_df, X, Y, mean_k_f),
-         aes(x = X * 1000, y = Y * 1000, fill = mean_k_f),
-         width = 4000,
-        height = 4000
-       ) +
-     scale_fill_viridis_c(name = expression(k[f])) +
-     coord_sf(
-         xlim = range(k_df$X * 1000),
-         ylim = range(k_df$Y * 1000)
-       ) +
-    theme_bw() +
-    xlab("") + ylab("") +
-    labs(subtitle = "Lingcod (Female) - Mean Growth Rate") +
-    theme(
-         strip.background = element_rect(fill = "white"),
-         axis.text.x = element_text(angle = 45, hjust = 1)
-       )
+  geom_sf() +
+  geom_tile(
+    data = plot_df,
+    aes(x = X * 1000, y = Y * 1000, fill = z_score),
+    width = 4000,
+    height = 4000
+  ) +
+  scale_fill_gradient2(
+    name = expression(z(k[f])),
+    low = "#2166ac",
+    mid = "white",
+    high = "#b2182b",
+    midpoint = 0,
+    limits = c(-max_abs, max_abs)
+  ) +
+  coord_sf(
+    xlim = range(k_df$X * 1000),
+    ylim = range(k_df$Y * 1000)
+  ) +
+  theme_bw() +
+  xlab("") +
+  ylab("") +
+  labs(subtitle = "Lingcod (Female) - Standardized Growth Rate Anomaly (SD)") +
+  theme(
+    strip.background = element_rect(fill = "white"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
